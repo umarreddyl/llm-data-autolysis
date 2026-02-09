@@ -88,6 +88,28 @@ def analyze_numeric_data(df:pd.DataFrame)->dict:
 
     return analysis
 
+#Outlier Detection
+def outliers_detect(df:pd.DataFrame)->dict:
+    outliers={}
+
+    numeric_df=df.select_dtypes(include=[np.number])
+
+    for col in numeric_df.columns:
+        q1=numeric_df[col].quantile(0.25)
+        q3=numeric_df[col].quantile(0.75)
+        iqr=q3-q1
+        
+        lower=q1-1.5*iqr
+        upper=q3+1.5*iqr
+        
+        values=numeric_df[(numeric_df[col]<lower) | (numeric_df[col]>upper)][col].tolist()
+
+        outliers[col]={
+            "count":len(values),
+            "values":values
+        }
+    return outliers
+
 #Deciding visualization
 
 def decide_visualization(profile:dict, analysis:dict) -> list:
@@ -140,6 +162,104 @@ def plotting_distribution(df:pd.DataFrame,output_path:Path):
     plt.savefig(output_path)
     plt.close()
 
+#Summary Preparation
+def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict) ->dict:
+    summary={}
+
+    summary["dataset_shape"]={
+        "rows":profile.get("num_rows"),
+        "columns":profile.get("num_cols")
+    }
+
+    summary["columns"]=profile.get("cols")
+    summary["missing_values"]=profile.get("missing_vals")
+    summary["numeric_columns"]=profile.get("num_numeric_columns")
+    summary["categorical_columns"]=profile.get("num_categorical_columns")
+    summary["charts_generated"]=charts
+    summary["outliers"] = outliers
+
+    return summary
+
+#Creation of ReadME File
+def writing_readme(summary:dict,charts:list):
+    sentences=[]
+    sentences.append("# Automated Data Analysis Report\n")
+
+    sentences.append("## Dataset Overview")
+    sentences.append(f"- Rows: {summary['dataset_shape']['rows']}")
+    sentences.append(f"- Columns: {summary['dataset_shape']['columns']}")
+    sentences.append(f"- Column Names: {', '.join(summary['columns'])}\n")
+
+    
+    sentences.append("## Data Quality")
+    sentences.append("Missing values per column:")
+    for col,count in summary["missing_values"].items():
+        sentences.append(f"- {col}: {count}")
+    sentences.append("")
+
+    sentences.append("## Analysis Summary")
+    sentences.append(f"- Numeric Columns:{summary['numeric_columns']}")
+    sentences.append(f"- Categorical Columns: {summary['categorical_columns']}\n")
+
+    sentences.append("## Outlier Analysis")
+    for col,info in summary["outliers"].items():
+        sentences.append(f"- {col}: {info['count']} outlier(s)")
+    sentences.append("")
+
+    if "correlation" in charts:
+        sentences.append("## Correlation Analysis")
+        sentences.append("A correlation heatmap was generated to understand the relation between numeric columns\n")
+        sentences.append("![Correlation Heatmap](correlation.png)\n")
+
+    if "distribution" in charts:
+        sentences.append("## Distribution Analysis")
+        sentences.append("A distribution plot was generated to understand the spread of numeric columns\n")
+        sentences.append("![Distribution Plot](distribution.png)\n")
+    
+    with open("README.md","w",encoding="utf-8") as writer:
+        writer.write("\n".join(sentences))
+
+#Reading Readme
+def reading_readme()->str:
+    with open("README.md", "r", encoding="utf-8") as reader:
+        return reader.read()
+    
+#LLM Polishing
+def polish_with_llm(text: str)->str:
+    api_key=os.environ.get("AIPROXY_TOKEN")
+
+    if not api_key:
+        print("No API key found. Skipping LLM polishing at this instant.")
+        return text
+    prompt=f"""
+    You are a professional data analyst. 
+    Rewrite the following analysis report to be clearer, cleaner, insightful and narrative-driven.
+    Do not add new facts. Do not hallucinate. Explain only what is already present.
+
+    Report:
+    {text}
+    """
+    headers={
+        "Authorization":f"Bearer {os.environ.get('AIPROXY_TOKEN')}",
+        "Content-Type":"application/json"
+    }
+    payload={
+        "model":"gpt-4o-mini",
+        "messages":[
+            {"role":"user","content":prompt}
+        ]
+    }
+
+    response=httpx.post(
+        "https://api.aiproxy.io/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
 #Main Function
 def main():
     if len(sys.argv)!=2:
@@ -155,11 +275,17 @@ def main():
     if csv_path.suffix.lower()!=".csv":
         print("Error: Input is not a CSV")
         sys.exit(1)
+
     df = load_csv(csv_path)
     print(df.head())
+
     profile=profile_data(df)
     analysis = analyze_numeric_data(df)
+    outliers = outliers_detect(df)
     charts_decided=decide_visualization(profile,analysis)
+    summary=prep_summary(profile,analysis,charts_decided,outliers)
+
+
     print(f"Processing Dataset: {csv_path.name}")
     print("Dataset profiling completed")
     print("Basic numeric analysis completed")
@@ -170,7 +296,16 @@ def main():
     if "distribution" in charts_decided:
         plotting_distribution(df, Path("distribution.png"))
         print("Distribution chart generated")
+    print("Summary Prepared for narration",summary)
+    writing_readme(summary,charts_decided)
+    print("README.md is generated")
+    original_file=reading_readme()
+    polished_file=polish_with_llm(original_file)
 
+    with open("README.md","w",encoding="utf-8") as writer:
+        writer.write(polished_file)
+    
+    print("README.md is polished using LLM")
 
 if __name__=="__main__":
     main()
