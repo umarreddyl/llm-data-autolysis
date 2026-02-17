@@ -24,6 +24,9 @@ import seaborn as sns
 from tenacity import retry,stop_after_attempt,wait_exponential
 import httpx
 
+def logging(message: str):
+    print(f"[INFO] {message}")
+
 #Config
 MAX_SAMPLE_ROWS=1000
 MAX_CHARTS=3
@@ -110,8 +113,11 @@ def outliers_detect(df:pd.DataFrame)->dict:
         }
     return outliers
 
-#Deciding visualization
+#Detecting Duplicates
+def detect_duplicates(df:pd.DataFrame) -> int:
+    return df.duplicated().sum()
 
+#Deciding visualization
 def decide_visualization(profile:dict, analysis:dict) -> list:
     charts=[]
     if not analysis.get("has_numeric"):
@@ -120,6 +126,7 @@ def decide_visualization(profile:dict, analysis:dict) -> list:
 
     if num_numeric>=2:
         charts.append("correlation")
+        charts.append("distribution")
     if num_numeric==1:
         charts.append("distribution")
     
@@ -146,10 +153,10 @@ def plotting_correlation(df:pd.DataFrame,output_path:Path):
 def plotting_distribution(df:pd.DataFrame,output_path:Path):
     numeric_df=df.select_dtypes(include=(np.number))
 
-    if numeric_df.shape[1]!=1:
+    if numeric_df.empty:
         return
 
-    col=numeric_df.columns[0]
+    col=numeric_df.columns[0] #First numeric column [0]
     values=numeric_df[col]
 
     plt.figure(figsize=(FIG_WIDTH,FIG_HEIGHT))
@@ -163,7 +170,7 @@ def plotting_distribution(df:pd.DataFrame,output_path:Path):
     plt.close()
 
 #Summary Preparation
-def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict) ->dict:
+def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict, duplicate_rows: int) ->dict:
     summary={}
 
     summary["dataset_shape"]={
@@ -176,7 +183,8 @@ def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict) ->
     summary["numeric_columns"]=profile.get("num_numeric_columns")
     summary["categorical_columns"]=profile.get("num_categorical_columns")
     summary["charts_generated"]=charts
-    summary["outliers"] = outliers
+    summary["outliers"]=outliers
+    summary["duplicate_rows"]=duplicate_rows
 
     return summary
 
@@ -195,6 +203,9 @@ def writing_readme(summary:dict,charts:list):
     sentences.append("Missing values per column:")
     for col,count in summary["missing_values"].items():
         sentences.append(f"- {col}: {count}")
+    sentences.append("")
+
+    sentences.append(f"- Duplicate Rows: {summary['duplicate_rows']}")
     sentences.append("")
 
     sentences.append("## Analysis Summary")
@@ -225,6 +236,10 @@ def reading_readme()->str:
         return reader.read()
     
 #LLM Polishing
+@retry(
+        stop=stop_after_attempt(RETRY_ATTEMPTS),
+        wait=wait_exponential(multiplier=1,min=2,max=10)
+)
 def polish_with_llm(text: str)->str:
     api_key=os.environ.get("AIPROXY_TOKEN")
 
@@ -282,30 +297,30 @@ def main():
     profile=profile_data(df)
     analysis = analyze_numeric_data(df)
     outliers = outliers_detect(df)
+    duplicate_rows=detect_duplicates(df)
     charts_decided=decide_visualization(profile,analysis)
-    summary=prep_summary(profile,analysis,charts_decided,outliers)
+    summary=prep_summary(profile,analysis,charts_decided,outliers,duplicate_rows)
 
-
-    print(f"Processing Dataset: {csv_path.name}")
-    print("Dataset profiling completed")
-    print("Basic numeric analysis completed")
-    print(f"Charts decided: {charts_decided}")
+    log(f"Processing dataset: {csv_path.name}")
+    log("Profiling completed")
+    log("Numeric analysis completed")
+    log(f"Charts selected: {charts_decided}")
     if "correlation" in charts_decided:
         plotting_correlation(df,Path("correlation.png"))
-        print("Correlation chart generated")
+        log("Correlation chart generated")
     if "distribution" in charts_decided:
         plotting_distribution(df, Path("distribution.png"))
-        print("Distribution chart generated")
-    print("Summary Prepared for narration",summary)
+        log("Distribution chart generated")
+    log("Summary Prepared for narration")
     writing_readme(summary,charts_decided)
-    print("README.md is generated")
+    log("README.md generated")
     original_file=reading_readme()
     polished_file=polish_with_llm(original_file)
 
     with open("README.md","w",encoding="utf-8") as writer:
         writer.write(polished_file)
     
-    print("README.md is polished using LLM")
+    log("LLM narration completed")
 
 if __name__=="__main__":
     main()
