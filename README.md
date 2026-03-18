@@ -1,11 +1,11 @@
-# Automated Data Analysis & Reporting (Project 2)
+# Automated Data Analysis & Reporting - Autolysis
 
 ## Overview
 
-This project is an automated data analysis pipeline built as part of the KaroStartup Internship.
+This project is an automated data analysis pipeline developed as part of the KaroStartup Internship.
 It takes a CSV dataset as input, performs exploratory data analysis, generates visualizations, and produces a structured analytical report.
 
-The goal is to reduce manual effort in understanding datasets by combining statistical analysis with automated narrative generation.
+The objective is to reduce manual effort in understanding datasets by combining statistical analysis with automated report generation, with optional LLM-based refinement.
 
 ---
 
@@ -14,7 +14,7 @@ The goal is to reduce manual effort in understanding datasets by combining stati
 * Dataset profiling (rows, columns, data types, missing values)
 * Detection of:
 
-  * Outliers (IQR method)
+  * Outliers (using IQR method)
   * Skewness (distribution analysis)
   * Duplicate records
   * Feature scale differences
@@ -23,7 +23,7 @@ The goal is to reduce manual effort in understanding datasets by combining stati
   * Correlation heatmap
   * Distribution plot
 * Structured report generation in Markdown format
-* Optional LLM-based refinement of the report (using Gemini API)
+* Optional LLM-based enhancement of the report (Google Gemini API)
 
 ---
 
@@ -48,21 +48,22 @@ media/
   ├── distribution.png
 ```
 
-Each dataset gets its own folder containing:
+Each dataset generates its own folder containing:
 
 * Visualizations
-* A generated analytical report
+* A detailed analysis report
 
 ---
 
 ## How It Works
 
-1. The script reads a CSV file
-2. It profiles the dataset and performs statistical analysis
-3. Relevant visualizations are generated
-4. A summary is created based on the analysis
-5. The summary is optionally enhanced using a language model
-6. Outputs are saved in a dedicated folder
+1. The script reads a CSV dataset
+2. Performs data profiling and statistical analysis
+3. Detects patterns such as outliers, skewness, and scale differences
+4. Generates relevant visualizations
+5. Creates a structured summary
+6. Optionally refines the report using an LLM
+7. Saves outputs in a dedicated folder
 
 ---
 
@@ -98,7 +99,7 @@ uv run autolysis.py goodreads.csv
 
 For each dataset, a folder is created containing:
 
-* `README.md` → Detailed analysis report
+* `README.md` → Generated analysis report
 * `correlation.png` → Correlation heatmap
 * `distribution.png` → Distribution plot
 
@@ -106,7 +107,7 @@ For each dataset, a folder is created containing:
 
 ## LLM Integration (Gemini)
 
-The project supports optional report enhancement using Google Gemini.
+The project supports optional report refinement using Google Gemini.
 
 Set your API key:
 
@@ -120,6 +121,7 @@ If no API key is provided, the script will skip this step and generate a standar
 
 ## Notes
 
-* The datasets used in this project are small and intended for demonstration.
-* The pipeline is designed to scale to larger datasets with minimal changes.
-* Feature scaling is recommended before using this data for machine learning tasks.
+* Designed to work with any CSV dataset
+* Output is automatically structured and saved
+* Suitable for quick exploratory analysis and reporting
+* Feature scaling is recommended before using data for ML tasks
