@@ -11,6 +11,8 @@ Missing values per column:
 - age: 0
 - score: 0
 
+- Duplicate Rows: 0
+
 ## Analysis Summary
 - Numeric Columns:2
 - Categorical Columns: 1
@@ -19,7 +21,9 @@ Missing values per column:
 - age: 0 outlier(s)
 - score: 0 outlier(s)
 
-## Correlation Analysis
-A correlation heatmap was generated to understand the relation between numeric columns
+## Skewness Analysis
+- age: Approximately symmetric (Skewness = 0.0)
+- score: Moderately negatively skewed (Skewness = -0.7)
 
-![Correlation Heatmap](correlation.png)
+## Feature Scale Analysis
+- Numeric features appear to be on comparable scales.

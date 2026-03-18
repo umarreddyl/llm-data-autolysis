@@ -13,6 +13,7 @@
 #File handling
 import sys
 import os
+import json
 from pathlib import Path
 #Data work
 import pandas as pd
@@ -24,7 +25,7 @@ import seaborn as sns
 from tenacity import retry,stop_after_attempt,wait_exponential
 import httpx
 
-def logging(message: str):
+def log(message: str):
     print(f"[INFO] {message}")
 
 #Config
@@ -113,6 +114,59 @@ def outliers_detect(df:pd.DataFrame)->dict:
         }
     return outliers
 
+#Skewed Detection
+def detect_skewness(df:pd.DataFrame) -> dict:
+    skew_details={}
+
+    numeric_df=df.select_dtypes(include=[np.number])
+
+    for col in numeric_df.columns:
+        skew_value=numeric_df[col].skew()
+
+        if skew_value>1:
+            skew_type="Highly positively skewed"
+        elif skew_value>0.5:
+            skew_type="Moderately positively skewed"
+        elif skew_value<-1:
+            skew_type="Highly negatively skewed"
+        elif skew_value<-0.5:
+            skew_type="Moderately negatively skewed"
+        else:
+            skew_type="Approximately symmetric"
+        
+        skew_details[col]={
+            "skew_value":round(skew_value,1),
+            "skew_type":skew_type
+        }
+    return skew_details
+
+#Feature scale check
+def detect_scale_variation(df:pd.DataFrame) -> dict:
+    scale_info={}
+
+    numeric_df=df.select_dtypes(include=[np.number])
+
+    if numeric_df.shape[1]<2:
+        return scale_info
+    
+    ranges={}
+    for col in numeric_df.columns:
+        col_range=numeric_df[col].max()-numeric_df[col].min()
+        ranges[col]=col_range
+    
+    max_range=max(ranges.values())
+    min_range=min(ranges.values())
+
+    if min_range==0:
+        scale_issue=True
+    else:
+        scale_issue=(max_range/min_range)>10
+    
+    scale_info["ranges"]=ranges
+    scale_info["scale_difference_detected"]=scale_issue
+
+    return scale_info
+
 #Detecting Duplicates
 def detect_duplicates(df:pd.DataFrame) -> int:
     return df.duplicated().sum()
@@ -123,11 +177,12 @@ def decide_visualization(profile:dict, analysis:dict) -> list:
     if not analysis.get("has_numeric"):
         return charts
     num_numeric=profile.get("num_numeric_columns",0)
+    num_rows=profile.get("num_rows",0)
 
-    if num_numeric>=2:
+    if num_numeric >= 2:
         charts.append("correlation")
         charts.append("distribution")
-    if num_numeric==1:
+    elif num_numeric == 1:
         charts.append("distribution")
     
     return charts
@@ -170,7 +225,7 @@ def plotting_distribution(df:pd.DataFrame,output_path:Path):
     plt.close()
 
 #Summary Preparation
-def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict, duplicate_rows: int) ->dict:
+def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict, duplicate_rows: int, skewness: dict, scale_info: dict) ->dict:
     summary={}
 
     summary["dataset_shape"]={
@@ -185,11 +240,13 @@ def prep_summary(profile: dict, analysis: dict, charts: list, outliers: dict, du
     summary["charts_generated"]=charts
     summary["outliers"]=outliers
     summary["duplicate_rows"]=duplicate_rows
+    summary["skewness"]=skewness
+    summary["scale_analysis"]=scale_info
 
     return summary
 
 #Creation of ReadME File
-def writing_readme(summary:dict,charts:list):
+def writing_readme(summary:dict,charts:list,output_dir:Path):
     sentences=[]
     sentences.append("# Automated Data Analysis Report\n")
 
@@ -198,7 +255,6 @@ def writing_readme(summary:dict,charts:list):
     sentences.append(f"- Columns: {summary['dataset_shape']['columns']}")
     sentences.append(f"- Column Names: {', '.join(summary['columns'])}\n")
 
-    
     sentences.append("## Data Quality")
     sentences.append("Missing values per column:")
     for col,count in summary["missing_values"].items():
@@ -209,13 +265,33 @@ def writing_readme(summary:dict,charts:list):
     sentences.append("")
 
     sentences.append("## Analysis Summary")
-    sentences.append(f"- Numeric Columns:{summary['numeric_columns']}")
+    sentences.append(f"- Numeric Columns: {summary['numeric_columns']}")
     sentences.append(f"- Categorical Columns: {summary['categorical_columns']}\n")
 
     sentences.append("## Outlier Analysis")
     for col,info in summary["outliers"].items():
         sentences.append(f"- {col}: {info['count']} outlier(s)")
     sentences.append("")
+
+    sentences.append("## Skewness Analysis")
+    for col,info in summary["skewness"].items():
+        sentences.append(
+            f"- {col}: {info['skew_type']} (Skewness = {info['skew_value']})"
+        )
+    sentences.append("")
+
+    if summary["scale_analysis"]:
+        sentences.append("## Feature Scale Analysis")
+        if summary["scale_analysis"]["scale_difference_detected"]:
+            sentences.append(
+                "- Significant scale differences detected across numeric features. "
+                "Feature scaling may be beneficial for modeling tasks."
+            )
+        else:
+            sentences.append(
+                "- Numeric features appear to be on comparable scales."
+            )
+        sentences.append("")
 
     if "correlation" in charts:
         sentences.append("## Correlation Analysis")
@@ -227,52 +303,74 @@ def writing_readme(summary:dict,charts:list):
         sentences.append("A distribution plot was generated to understand the spread of numeric columns\n")
         sentences.append("![Distribution Plot](distribution.png)\n")
     
-    with open("README.md","w",encoding="utf-8") as writer:
+    readme_path = output_dir / "README.md"
+    with open(readme_path, "w", encoding="utf-8") as writer:
         writer.write("\n".join(sentences))
 
 #Reading Readme
-def reading_readme()->str:
-    with open("README.md", "r", encoding="utf-8") as reader:
+def reading_readme(output_dir: Path) -> str:
+    with open(output_dir / "README.md", "r", encoding="utf-8") as reader:
         return reader.read()
     
 #LLM Polishing
 @retry(
-        stop=stop_after_attempt(RETRY_ATTEMPTS),
-        wait=wait_exponential(multiplier=1,min=2,max=10)
+    stop=stop_after_attempt(RETRY_ATTEMPTS),
+    wait=wait_exponential(multiplier=1, min=2, max=10)
 )
-def polish_with_llm(text: str)->str:
-    api_key=os.environ.get("AIPROXY_TOKEN")
+def polish_with_llm(text: str) -> str:
+    api_key = os.environ.get("GEMINI_API_KEY")
 
     if not api_key:
-        print("No API key found. Skipping LLM polishing at this instant.")
+        log("No Gemini API key found. Skipping LLM polishing.")
         return text
-    prompt=f"""
-    You are a professional data analyst. 
-    Rewrite the following analysis report to be clearer, cleaner, insightful and narrative-driven.
-    Do not add new facts. Do not hallucinate. Explain only what is already present.
 
-    Report:
-    {text}
-    """
-    headers={
-        "Authorization":f"Bearer {os.environ.get('AIPROXY_TOKEN')}",
-        "Content-Type":"application/json"
-    }
-    payload={
-        "model":"gpt-4o-mini",
-        "messages":[
-            {"role":"user","content":prompt}
+    print("Calling Gemini LLM...")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+
+    prompt = f"""
+You are a professional data analyst.
+
+Convert the following dataset analysis into a structured, engaging narrative report.
+
+Include:
+1. Dataset Overview
+2. Key Observations
+3. Insights
+4. Implications
+
+Make it clean, readable, and in markdown.
+
+Analysis:
+{text}
+"""
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
         ]
     }
 
-    response=httpx.post(
-        "https://api.aiproxy.io/v1/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=REQUEST_TIMEOUT
-    )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    response = httpx.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+
+    if response.status_code != 200:
+        log(f"Gemini failed ({response.status_code}), skipping LLM.")
+        print(response.text)
+        return text
+
+    data = response.json()
+    
+
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception:
+        log("Unexpected Gemini response format, skipping...")
+        return text
+
 
 
 #Main Function
@@ -292,32 +390,38 @@ def main():
         sys.exit(1)
 
     df = load_csv(csv_path)
+    output_dir = Path(csv_path.stem)
+    output_dir.mkdir(exist_ok=True)
+
     print(df.head())
 
     profile=profile_data(df)
-    analysis = analyze_numeric_data(df)
-    outliers = outliers_detect(df)
+    analysis=analyze_numeric_data(df)
+    outliers=outliers_detect(df)
     duplicate_rows=detect_duplicates(df)
+    skewness=detect_skewness(df)
+    scale_info=detect_scale_variation(df)
+
     charts_decided=decide_visualization(profile,analysis)
-    summary=prep_summary(profile,analysis,charts_decided,outliers,duplicate_rows)
+    summary=prep_summary(profile,analysis,charts_decided,outliers,duplicate_rows, skewness, scale_info)
 
     log(f"Processing dataset: {csv_path.name}")
     log("Profiling completed")
     log("Numeric analysis completed")
     log(f"Charts selected: {charts_decided}")
     if "correlation" in charts_decided:
-        plotting_correlation(df,Path("correlation.png"))
+        plotting_correlation(df,output_dir/"correlation.png")
         log("Correlation chart generated")
     if "distribution" in charts_decided:
-        plotting_distribution(df, Path("distribution.png"))
+        plotting_distribution(df,output_dir/"distribution.png")
         log("Distribution chart generated")
     log("Summary Prepared for narration")
-    writing_readme(summary,charts_decided)
+    writing_readme(summary,charts_decided,output_dir)
     log("README.md generated")
-    original_file=reading_readme()
-    polished_file=polish_with_llm(original_file)
+    original_file=json.dumps(summary,indent=2,default=str)
+    polished_file = polish_with_llm(original_file)
 
-    with open("README.md","w",encoding="utf-8") as writer:
+    with open(output_dir / "README.md", "w", encoding="utf-8") as writer:
         writer.write(polished_file)
     
     log("LLM narration completed")

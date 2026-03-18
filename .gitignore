@@ -1,4 +1,13 @@
 .venv/
 __pycache__/
 *.pyc
+
+# system files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# PDFs / unnecessary
 Project2_KaroStartup_Internship.pdf
